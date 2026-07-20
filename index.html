@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Metro by T-Mobile — Refund Dashboard</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="loading-overlay"><div class="spinner"></div><span>Loading Refund data…</span></div>
+<div id="app"></div>
+
+<!-- Charting -->
+<script src="js/vendor/chart.umd.min.js"></script>
+<!-- Excel parsing (for the Upload / replace-dataset feature) -->
+<script src="js/vendor/xlsx.full.min.js"></script>
+<!-- Decompression (used for local caching of live API data) -->
+<script src="js/vendor/pako.min.js"></script>
+
+<!-- Supabase client (data source) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!-- Only file you should need to edit after deployment -->
+<script src="config.js"></script>
+
+<!-- App code, in dependency order -->
+<script src="js/data-core.js"></script>
+<script src="js/data-upload.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
