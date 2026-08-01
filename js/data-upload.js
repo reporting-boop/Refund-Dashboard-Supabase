@@ -22,6 +22,7 @@ const FIELD_ALIASES = {
   discount: ['discount','discountamount','promoamount'],
   taxamount:['taxamount','tax','salestax'],
   subtotal: ['subtotal','total','linetotal','grandtotal'],
+  cashpaid: ['cashpaid','cashamount','cashpayment','amountpaid','cash'],
   profit:   ['profit','commission','margin','earnings','netprofit'],
   employee: ['employeename','employee','rep','salesrep','repname','agent','staff','soldby'],
   invno:    ['invoice','invno','invoiceno','invoicenumber','transactionid','txnid','receiptno'],
@@ -112,6 +113,7 @@ function parseWorkbookToPayload(rows, headers, filename){
     const discount = colMap.discount ? (Number(row[colMap.discount]) || 0) : 0;
     const taxamount = colMap.taxamount ? (Number(row[colMap.taxamount]) || 0) : 0;
     const subtotal = colMap.subtotal ? (Number(row[colMap.subtotal]) || 0) : price;
+    const cashpaid = colMap.cashpaid ? (Number(row[colMap.cashpaid]) || 0) : 0;
     const profit = Number(row[colMap.profit]) || 0;
     const ntidV = colMap.ntid ? String(row[colMap.ntid]??'').trim() : '';
     const employeeName = String(row[colMap.employee]??'Unassigned').trim() || 'Unassigned';
@@ -131,9 +133,9 @@ function parseWorkbookToPayload(rows, headers, filename){
       idOf(paytypes, paytypeV),
       idOf(statuses, statusV),
       idOf(dates, iso),
-      qty, Math.round(price*100)/100, Math.round(profit*100)/100,
+     qty, Math.round(price*100)/100, Math.round(profit*100)/100,
       Math.round(discount*100)/100, Math.round(taxamount*100)/100, Math.round(subtotal*100)/100,
-      invnoV
+      invnoV, Math.round(cashpaid*100)/100
     ]);
   }
 
