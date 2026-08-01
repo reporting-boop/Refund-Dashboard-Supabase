@@ -477,7 +477,7 @@ function rankTableHTML(rows, opts){
   const maxVal = rows.length? Math.max(...rows.map(r=>Math.abs(r.netRevenue)),1) : 1;
   if(!rows.length) return emptyStateHTML('No results', 'Try widening your filters.');
   return `<table class="dtable"><thead><tr>
-      <th>${opts.nameLabel||'Name'}</th><th class="num">Total Price</th><th class="num">qty</th><th>Share</th>
+      <th>${opts.nameLabel||'Name'}</th><th class="num">Total Price</th><th class="num">qty</th><th class="num">Tax Amount</th><th class="num">Subtotal</th><th class="num">Cash Paid</th><th>Share</th>
     </tr></thead><tbody>
     ${rows.map((r,i)=>{
       const neg = r.netRevenue<0;
@@ -486,6 +486,9 @@ function rankTableHTML(rows, opts){
         <td class="name-cell"><span class="rank">${i+1}</span>${r.name}</td>
         <td class="num"${neg?' style="color:var(--negative)"':''}>${fmtMoney(r.netRevenue)}</td>
         <td class="num">${fmtNum(r.netUnits)}</td>
+        <td class="num"${r.totalTax<0?' style="color:var(--negative)"':''}>${fmtMoney(r.totalTax)}</td>
+        <td class="num"${r.totalSubtotal<0?' style="color:var(--negative)"':''}>${fmtMoney(r.totalSubtotal)}</td>
+        <td class="num"${r.totalCashPaid<0?' style="color:var(--negative)"':''}>${fmtMoney(r.totalCashPaid)}</td>
         <td><div class="bar-cell"><div class="bar-track"><div class="bar-fill"${neg?' style="background:var(--negative);width:'+Math.max(4,Math.abs(r.netRevenue)/maxVal*100)+'%"':' style="width:'+Math.max(4,Math.abs(r.netRevenue)/maxVal*100)+'%"'}></div></div></div></td>
       </tr>`;}).join('')}
     </tbody></table>`;
@@ -511,6 +514,7 @@ function renderOverview(){
     <div id="filterBarSlot"></div>
     <div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;margin-bottom:16px;">
       <div>
+        <div class="kpi-grid" id="kpiRow0" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px;"></div>
         <div class="kpi-grid" id="kpiRow1" style="margin-bottom:16px;"></div>
         <div class="kpi-grid secondary" id="kpiRow2" style="margin-bottom:16px;"></div>
         <div class="kpi-grid" id="kpiRow3" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;"></div>
@@ -592,6 +596,18 @@ function renderKPIRows(idx, s){
   const dUnits   = periodDelta(i=>summarize(i).netUnits);
   const dInv     = periodDelta(i=>summarize(i).invoiceCount);
   const dTxn     = periodDelta(i=>summarize(i).rowCount);
+  const dTax       = periodDelta(i=>summarize(i).totalTax);
+  const dSubtotal  = periodDelta(i=>summarize(i).totalSubtotal);
+  const dCashPaid  = periodDelta(i=>summarize(i).totalCashPaid);
+
+  const kpiRow0El = document.getElementById('kpiRow0');
+  if(kpiRow0El){
+    kpiRow0El.innerHTML = [
+      kpiCard({icon:'dollar', iconBg:'var(--amber-tint)', iconColor:'#9C6B14', label:'Total Tax Amount', value:fmtMoney(s.totalTax), valueColor:'var(--negative)', delta:deltaBadge(dTax,false), tip:'Sum of tax amount for all refund line items.'}),
+      kpiCard({icon:'table',  iconBg:'var(--teal-tint)',  iconColor:'var(--teal)', label:'Total Subtotal', value:fmtMoney(s.totalSubtotal), valueColor:'var(--negative)', delta:deltaBadge(dSubtotal,false), tip:'Sum of subtotal for all refund line items.'}),
+      kpiCard({icon:'trendDown', iconBg:'var(--primary-tint)', iconColor:'var(--primary)', label:'Total Cash Paid', value:fmtMoney(s.totalCashPaid), valueColor:'var(--negative)', delta:deltaBadge(dCashPaid,false), tip:'Sum of cash paid for all refund line items.'})
+    ].join('');
+  }
 
   document.getElementById('kpiRow1').innerHTML = [
     kpiCard({icon:'dollar',    iconBg:'var(--primary-tint)',  iconColor:'var(--primary)',  label:'Refund Total Price',  value:fmtMoney(s.netRevenue),          valueColor:'var(--negative)', delta:deltaBadge(dRevenue),    tip:'Sum of price for all refund line items.'}),
@@ -658,12 +674,16 @@ function renderTrendChart(idx){
   // Aggregate by month (YYYY-MM)
   const f = DB.fact;
   const monthMap = new Map(); // 'YYYY-MM' → total price
+  const monthExtra = new Map(); // 'YYYY-MM' → {tax, subtotal, cashPaid}
   for(let k=0;k<idx.length;k++){
     const r = f[idx[k]];
     const iso = DB.dims.dates[r[F_DATE]]; // 'YYYY-MM-DD'
     if(!iso) continue;
     const ym = iso.slice(0,7); // 'YYYY-MM'
     monthMap.set(ym, (monthMap.get(ym)||0) + r[F_PRICE]);
+    if(!monthExtra.has(ym)) monthExtra.set(ym, {tax:0, subtotal:0, cashPaid:0});
+    const me = monthExtra.get(ym);
+    me.tax += r[F_TAX]; me.subtotal += r[F_SUBTOTAL]; me.cashPaid += r[F_CASHPAID];
   }
   const sortedMonths = [...monthMap.keys()].sort();
   const labels = sortedMonths.map(ym=>{
@@ -680,7 +700,10 @@ function renderTrendChart(idx){
     options:{
       responsive:true, maintainAspectRatio:false,
       scales:{ x:{grid:{display:false}, ticks:{maxRotation:0, autoSkip:true, maxTicksLimit:14, font:{size:10}}}, y:{grid:baseGrid(), ticks:{callback:v=>fmtCompactNum(v), font:{size:10}}} },
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>'Refund price: '+fmtMoney(c.parsed.y), title:(c)=>c[0].label } } }
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{
+        label:(c)=>'Refund price: '+fmtMoney(c.parsed.y),
+        afterLabel:(c)=>{ const me=monthExtra.get(sortedMonths[c.dataIndex])||{tax:0,subtotal:0,cashPaid:0}; return ['Tax Amount: '+fmtMoney(me.tax),'Subtotal: '+fmtMoney(me.subtotal),'Cash Paid: '+fmtMoney(me.cashPaid)]; },
+        title:(c)=>c[0].label } } }
     }
   });
 }
@@ -841,7 +864,10 @@ function renderActivationDonut(idx){
     data:{labels:rows.map(r=>r.name), datasets:[{data:rows.map(r=>Math.abs(r.netRevenue)), backgroundColor:colors, borderWidth:0}]},
     options:{cutout:'68%', responsive:true, maintainAspectRatio:false,
       onClick:(evt,els)=>{ if(!els.length) return; toggleFilter('acttypes', rows[els[0].index].idx); onFiltersChanged(); },
-      plugins:{tooltip:{callbacks:{label:(c)=>c.label+': '+fmtMoney(c.parsed)}}}}
+      plugins:{tooltip:{callbacks:{
+        label:(c)=>c.label+': '+fmtMoney(c.parsed),
+        afterLabel:(c)=>{ const r=rows[c.dataIndex]; return ['Tax Amount: '+fmtMoney(r.totalTax),'Subtotal: '+fmtMoney(r.totalSubtotal),'Cash Paid: '+fmtMoney(r.totalCashPaid)]; }
+      }}}}
   });
   const total = rows.reduce((a,r)=>a+Math.abs(r.netRevenue),0);
   document.getElementById('actDonutCenter').innerHTML = `<b>${fmtMoney(total,true)}</b><span>Total</span>`;
@@ -858,7 +884,10 @@ function renderCategoryDonut(idx){
     data:{labels:rows.map(r=>r.name), datasets:[{data:rows.map(r=>r.rowCount), backgroundColor:colors, borderWidth:0}]},
     options:{cutout:'68%', responsive:true, maintainAspectRatio:false,
       onClick:(evt,els)=>{ if(!els.length) return; toggleFilter('categories', rows[els[0].index].idx); onFiltersChanged(); },
-      plugins:{tooltip:{callbacks:{label:(c)=>{ const r=rows[c.dataIndex]; return c.label+': '+fmtNum(c.parsed)+' lines · '+fmtMoney(r.netRevenue)+' total price'; }}}}}
+      plugins:{tooltip:{callbacks:{
+        label:(c)=>{ const r=rows[c.dataIndex]; return c.label+': '+fmtNum(c.parsed)+' lines · '+fmtMoney(r.netRevenue)+' total price'; },
+        afterLabel:(c)=>{ const r=rows[c.dataIndex]; return ['Tax Amount: '+fmtMoney(r.totalTax),'Subtotal: '+fmtMoney(r.totalSubtotal),'Cash Paid: '+fmtMoney(r.totalCashPaid)]; }
+      }}}}
   });
   const total = rows.reduce((a,r)=>a+r.rowCount,0);
   document.getElementById('catDonutCenter').innerHTML = `<b>${fmtNum(total)}</b><span>Line items</span>`;
@@ -884,7 +913,10 @@ function renderPaymentBar(idx){
     options:{indexAxis:'y', responsive:true, maintainAspectRatio:false,
       onClick:(evt,els)=>{ if(!els.length) return; toggleFilter('paytypes', rows[els[0].index].idx); onFiltersChanged(); },
       scales:{x:{grid:baseGrid(), ticks:{font:{size:10}}}, y:{grid:{display:false}, ticks:{font:{size:11}}}},
-      plugins:{tooltip:{callbacks:{label:(c)=>fmtNum(c.parsed.x)+' transactions'}}}}
+      plugins:{tooltip:{callbacks:{
+        label:(c)=>fmtNum(c.parsed.x)+' transactions',
+        afterLabel:(c)=>{ const r=rows[c.dataIndex]; return ['Tax Amount: '+fmtMoney(r.totalTax),'Subtotal: '+fmtMoney(r.totalSubtotal),'Cash Paid: '+fmtMoney(r.totalCashPaid)]; }
+      }}}}
   });
 }
 
@@ -900,6 +932,7 @@ function renderStoreCategoryTable(idx, storeFilter){
   // Build store→category aggregation
   const storeMap = new Map(); // storeIdx → { catIdx → {qty, invSet, price} }
   const catSet = new Set();
+  const storeTotals = new Map(); // storeIdx → {tax, subtotal, cashPaid}
   for(let k=0;k<idx.length;k++){
     const r = f[idx[k]];
     const si = r[F_STORE], ci = r[F_CATEGORY];
@@ -911,6 +944,11 @@ function renderStoreCategoryTable(idx, storeFilter){
     agg.qty += r[F_QTY];
     agg.invSet.add(r[F_INV]);
     agg.price += r[F_PRICE];
+    if(!storeTotals.has(si)) storeTotals.set(si, {tax:0, subtotal:0, cashPaid:0});
+    const st = storeTotals.get(si);
+    st.tax += r[F_TAX];
+    st.subtotal += r[F_SUBTOTAL];
+    st.cashPaid += r[F_CASHPAID];
   }
 
   // Sort categories by name
@@ -920,7 +958,8 @@ function renderStoreCategoryTable(idx, storeFilter){
   let storeRows = [...storeMap.entries()].map(([si, catMap])=>{
     let totalPrice=0;
     catMap.forEach(a=>{ totalPrice+=a.price; });
-    return {si, catMap, totalPrice, name: DB.dims.stores[si]};
+    const st = storeTotals.get(si) || {tax:0, subtotal:0, cashPaid:0};
+    return {si, catMap, totalPrice, name: DB.dims.stores[si], tax:st.tax, subtotal:st.subtotal, cashPaid:st.cashPaid};
   }).sort((a,b)=>b.totalPrice - a.totalPrice);
 
   // Apply search filter
@@ -934,7 +973,7 @@ function renderStoreCategoryTable(idx, storeFilter){
       <button class="scat-btn" title="${DB.dims.categories[ci]}">${DB.dims.categories[ci]}</button>
     </th>`).join('');
 
-  const bodyRows = storeRows.map(({si, catMap, totalPrice, name})=>{
+  const bodyRows = storeRows.map(({si, catMap, totalPrice, name, tax, subtotal, cashPaid})=>{
     const catCells = cats.map(ci=>{
       const agg = catMap.get(ci);
       if(!agg) return `<td class="num scat-empty">—</td>`;
@@ -948,6 +987,9 @@ function renderStoreCategoryTable(idx, storeFilter){
       <td class="scat-name" title="${name}">${name}</td>
       ${catCells}
       <td class="num scat-total">${fmtMoney(totalPrice)}</td>
+      <td class="num">${fmtMoney(tax)}</td>
+      <td class="num">${fmtMoney(subtotal)}</td>
+      <td class="num">${fmtMoney(cashPaid)}</td>
     </tr>`;
   }).join('');
 
@@ -957,6 +999,9 @@ function renderStoreCategoryTable(idx, storeFilter){
         <th>Store Name</th>
         ${catHeader}
         <th class="num">Total Price</th>
+        <th class="num">Tax Amount</th>
+        <th class="num">Subtotal</th>
+        <th class="num">Cash Paid</th>
       </tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>`;
@@ -983,12 +1028,15 @@ function renderRefundEmployeesPanel(idx){
     ${!rows.length ? `<div class="empty-state">${ic('check')}<b>No refunds</b><span>No refund transactions in the current filters.</span></div>` : `
     <div class="table-wrap">
       <table class="dtable"><thead><tr>
-        <th>Employee</th><th class="num">Refund Value</th><th class="num">Count</th><th>Share</th>
+        <th>Employee</th><th class="num">Refund Value</th><th class="num">Count</th><th class="num">Tax Amount</th><th class="num">Subtotal</th><th class="num">Cash Paid</th><th>Share</th>
       </tr></thead><tbody>
       ${rows.map((r,i)=>`<tr data-idx="${r.idx}" style="cursor:pointer;">
         <td class="name-cell"><span class="rank" style="background:var(--negative-tint);color:var(--negative)">${i+1}</span>${r.name}</td>
         <td class="num" style="color:var(--negative)">${fmtMoney(Math.abs(r.netRevenue))}</td>
         <td class="num">${fmtNum(r.rowCount)}</td>
+        <td class="num" style="color:var(--negative)">${fmtMoney(Math.abs(r.totalTax))}</td>
+        <td class="num" style="color:var(--negative)">${fmtMoney(Math.abs(r.totalSubtotal))}</td>
+        <td class="num" style="color:var(--negative)">${fmtMoney(Math.abs(r.totalCashPaid))}</td>
         <td><div class="bar-cell"><div class="bar-track"><div class="bar-fill" style="background:var(--negative);width:${Math.max(4,Math.abs(r.netRevenue)/maxVal*100)}%"></div></div></div></td>
       </tr>`).join('')}
       </tbody></table>
@@ -1100,6 +1148,7 @@ function refreshMarketTiles(){
       <div class="tile-metric"><b${neg?' style="color:var(--negative)"':''}>${fmtMoney(r.netRevenue,true)}</b><span>total price</span></div>
       <div class="bar-cell" style="margin-top:8px;"><div class="bar-track"><div class="bar-fill"${neg?' style="background:var(--negative);width:'+Math.max(4,Math.abs(r.netRevenue)/maxVal*100)+'%"':' style="width:'+Math.max(4,Math.abs(r.netRevenue)/maxVal*100)+'%"'}></div></div></div>
       <div class="tile-foot"><span>${fmtNum(r.netUnits)} qty</span><span>${ic('arrowR')}</span></div>
+      <div class="tile-foot" style="margin-top:6px;"><span>Tax ${fmtMoney(r.totalTax,true)}</span><span>Sub ${fmtMoney(r.totalSubtotal,true)}</span><span>Cash ${fmtMoney(r.totalCashPaid,true)}</span></div>
     </div>`;}).join('');
   grid.querySelectorAll('.tile').forEach(t=>{ t.onclick = ()=>goToEntityDetail('market', Number(t.dataset.idx)); });
 }
@@ -1119,7 +1168,10 @@ function refreshEntityTable(entityKey){
     {key:'netUnits', label:'qty', num:true},
     {key:'invoiceCount', label:'Invoice', num:true},
     {key:'avgPricePerUnit', label:'Avg price', num:true},
-    {key:'refundRate', label:'Refund %', num:true}
+    {key:'refundRate', label:'Refund %', num:true},
+    {key:'totalTax', label:'Tax Amount', num:true},
+    {key:'totalSubtotal', label:'Subtotal', num:true},
+    {key:'totalCashPaid', label:'Cash Paid', num:true}
   ];
   document.getElementById('entityTableWrap').innerHTML = !pageRows.length ? emptyStateHTML('No '+cfg.label.toLowerCase()+'s found','Try a different search or clear your filters.') : `
     <table class="dtable"><thead><tr>
@@ -1132,6 +1184,9 @@ function refreshEntityTable(entityKey){
       <td class="num">${fmtNum(r.invoiceCount)}</td>
       <td class="num"${r.avgPricePerUnit<0?' style="color:var(--negative)"':''}>${fmtMoney2(r.avgPricePerUnit)}</td>
       <td class="num">${fmtPct(r.refundRate)}</td>
+      <td class="num"${r.totalTax<0?' style="color:var(--negative)"':''}>${fmtMoney(r.totalTax)}</td>
+      <td class="num"${r.totalSubtotal<0?' style="color:var(--negative)"':''}>${fmtMoney(r.totalSubtotal)}</td>
+      <td class="num"${r.totalCashPaid<0?' style="color:var(--negative)"':''}>${fmtMoney(r.totalCashPaid)}</td>
     </tr>`).join('')}
     </tbody></table>`;
   document.querySelectorAll('#entityTableWrap th').forEach(th=>{
@@ -1154,8 +1209,8 @@ function exportEntityCSV(entityKey){
   const sort = STATE.tableSort['list_'+entityKey] || {col:'netRevenue',dir:'desc'};
   const rows = sortRowsBy(searchRows(getEntityRows(entityKey), query, 'name'), sort.col, sort.dir);
   exportCSV(cfg.plural.toLowerCase()+'_export.csv',
-    [cfg.label,'Total Price','qty','Invoice','Avg price','Refund Rate'],
-    rows.map(r=>[r.name, r.netRevenue.toFixed(2), r.netUnits, r.invoiceCount, r.avgPricePerUnit.toFixed(2), (r.refundRate*100).toFixed(2)+'%']));
+    [cfg.label,'Total Price','qty','Invoice','Avg price','Refund Rate','Tax Amount','Subtotal','Cash Paid'],
+    rows.map(r=>[r.name, r.netRevenue.toFixed(2), r.netUnits, r.invoiceCount, r.avgPricePerUnit.toFixed(2), (r.refundRate*100).toFixed(2)+'%', r.totalTax.toFixed(2), r.totalSubtotal.toFixed(2), r.totalCashPaid.toFixed(2)]));
 }
 
 /* ---------------------------- GENERIC ENTITY DETAIL (drill-through) ---------------------------- */
@@ -1181,6 +1236,9 @@ function renderEntityDetail(entityKey){
         <div class="dh-stat"><b>${fmtNum(Math.abs(s.netUnits))}</b><span>Refund Qty</span></div>
         <div class="dh-stat"><b>${fmtNum(s.invoiceCount)}</b><span>Invoices</span></div>
         <div class="dh-stat"><b>${fmtNum(s.rowCount)}</b><span>Transactions</span></div>
+        <div class="dh-stat"><b>${fmtMoney(s.totalTax,true)}</b><span>Tax Amount</span></div>
+        <div class="dh-stat"><b>${fmtMoney(s.totalSubtotal,true)}</b><span>Subtotal</span></div>
+        <div class="dh-stat"><b>${fmtMoney(s.totalCashPaid,true)}</b><span>Cash Paid</span></div>
       </div>
     </div>
     ${!idx.length ? emptyStateHTML('No data for this '+cfg.label.toLowerCase()+' in the current filters', 'Try clearing a slicer above.') : `
@@ -1243,10 +1301,13 @@ function txnRowHTML(i){
     <td><span class="badge ${statusBadgeClass(DB.dims.statuses[r[F_STATUS]])}">${DB.dims.statuses[r[F_STATUS]]}</span></td>
     <td class="num">${r[F_QTY]}</td>
     <td class="num">${fmtMoney2(r[F_PRICE])}</td>
+    <td class="num">${fmtMoney2(r[F_TAX])}</td>
+    <td class="num">${fmtMoney2(r[F_SUBTOTAL])}</td>
+    <td class="num">${fmtMoney2(r[F_CASHPAID])}</td>
   </tr>`;
 }
 function renderTxnTable(idxList, containerId){
-  const headers = ['Invoice','Date','Market','DM','Store Name','Employee Name','itmdesc','Category','acttype','paytype','Status','qty','price'];
+  const headers = ['Invoice','Date','Market','DM','Store Name','Employee Name','itmdesc','Category','acttype','paytype','Status','qty','price','taxamount','subtotal','cashpaid'];
   const el = document.getElementById(containerId);
   el.innerHTML = !idxList.length ? emptyStateHTML('No transactions','Try widening your filters.') :
     `<table class="dtable"><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${idxList.map(txnRowHTML).join('')}</tbody></table>`;
