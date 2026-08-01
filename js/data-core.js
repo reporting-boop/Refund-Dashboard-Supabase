@@ -8,8 +8,7 @@
 
 /* ---- field indices inside each fact row -------------------------- */
 const F_MARKET=0, F_STORE=1, F_DM=2, F_EMP=3, F_ITEM=4, F_CATEGORY=5, F_ACT=6, F_PAY=7, F_STATUS=8, F_DATE=9,
-      F_QTY=10, F_PRICE=11, F_PROFIT=12, F_DISCOUNT=13, F_TAX=14, F_SUBTOTAL=15, F_INV=16;
-
+      F_QTY=10, F_PRICE=11, F_PROFIT=12, F_DISCOUNT=13, F_TAX=14, F_SUBTOTAL=15, F_INV=16, F_CASHPAID=17;
 /* ===================================================================
    LIVE DATA LOADING
    The dashboard no longer ships with a baked-in dataset. On boot it
@@ -259,7 +258,7 @@ function summarize(idxArr){
   const statSale = DB.rev.statuses.get('Sale');
   const statRefund = DB.rev.statuses.get('Refund');
   const actNew = DB.rev.acttypes.get('New Activation');
-  let netRevenue=0, netUnits=0, saleRevenue=0, saleUnits=0, refundCount=0, newCount=0, totalDiscount=0, totalTax=0, totalSubtotal=0;
+  let netRevenue=0, netUnits=0, saleRevenue=0, saleUnits=0, refundCount=0, newCount=0, totalDiscount=0, totalTax=0, totalSubtotal=0, totalCashPaid=0;
   const stores=new Set(), employees=new Set(), markets=new Set(), items=new Set(), managers=new Set(), invoices=new Set();
   for(let k=0;k<idxArr.length;k++){
     const r = f[idxArr[k]];
@@ -269,6 +268,7 @@ function summarize(idxArr){
     totalDiscount += r[F_DISCOUNT];
     totalTax += r[F_TAX];
     totalSubtotal += r[F_SUBTOTAL];
+    totalCashPaid += r[F_CASHPAID];
     if(r[F_STATUS]===statSale){ saleRevenue+=price; saleUnits+=qty; }
     if(r[F_STATUS]===statRefund) refundCount++;
     if(r[F_ACT]===actNew) newCount++;
@@ -281,7 +281,7 @@ function summarize(idxArr){
     avgPricePerUnit: saleUnits>0 ? saleRevenue/saleUnits : 0,
     refundRate: rowCount>0 ? refundCount/rowCount : 0,
     newActMix: rowCount>0 ? newCount/rowCount : 0,
-    totalDiscount, totalTax, totalSubtotal,
+  totalDiscount, totalTax, totalSubtotal, totalCashPaid,
     avgBasketValue: invoices.size>0 ? totalSubtotal/invoices.size : 0,
     rowCount, invoiceCount: invoices.size,
     activeStores: stores.size, activeEmployees: employees.size,
@@ -298,19 +298,23 @@ function groupBy(idxArr, fieldIdx, dimNames, opts){
   for(let k=0;k<idxArr.length;k++){
     const r = f[idxArr[k]];
     const key = r[fieldIdx];
-    let a = map.get(key);
-    if(!a){ a = {idx:key, name:dimNames[key], netRevenue:0, netUnits:0, saleUnits:0, saleRevenue:0, rowCount:0, invoices:new Set(), refunds:0}; map.set(key,a); }
+ let a = map.get(key);
+    if(!a){ a = {idx:key, name:dimNames[key], netRevenue:0, netUnits:0, saleUnits:0, saleRevenue:0, rowCount:0, invoices:new Set(), refunds:0, totalTax:0, totalSubtotal:0, totalCashPaid:0}; map.set(key,a); }
     a.netRevenue += r[F_PRICE];
     a.netUnits += r[F_QTY];
     a.rowCount += 1;
     a.invoices.add(r[F_INV]);
+    a.totalTax += r[F_TAX];
+    a.totalSubtotal += r[F_SUBTOTAL];
+    a.totalCashPaid += r[F_CASHPAID];
     if(r[F_STATUS]===DB.rev.statuses.get('Sale')){ a.saleUnits += r[F_QTY]; a.saleRevenue += r[F_PRICE]; }
     if(r[F_STATUS]===DB.rev.statuses.get('Refund')) a.refunds += 1;
   }
   let rows = [...map.values()].map(a=>({
     idx:a.idx, name:a.name, netRevenue:a.netRevenue, netUnits:a.netUnits, rowCount:a.rowCount,
     invoiceCount:a.invoices.size, refundRate: a.rowCount? a.refunds/a.rowCount:0,
-    avgPricePerUnit: a.saleUnits>0 ? a.saleRevenue/a.saleUnits : 0
+    avgPricePerUnit: a.saleUnits>0 ? a.saleRevenue/a.saleUnits : 0,
+    totalTax:a.totalTax, totalSubtotal:a.totalSubtotal, totalCashPaid:a.totalCashPaid
   }));
   if(opts.sortBy==='name') rows.sort((x,y)=>x.name.localeCompare(y.name));
   else if(opts.sortBy==='idx') rows.sort((x,y)=>x.idx-y.idx);
